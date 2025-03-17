@@ -51,13 +51,13 @@ uv  run torchrun --nproc_per_node=8 train_fsdp.py @ configs/7B/H100.toml
 | 7B         | 8    | H100 sxm | n/a |
 
 
-## convergence
-
-
-
-
-
-
-
+## convergence 150M
 
 ![Screenshot from 2025-03-16 21-38-16](https://github.com/user-attachments/assets/5b93ec21-3e71-4f66-be47-7e07bc88c77e)
+
+
+to reproduce the convergence, run
+```bash
+uv  run torchrun --nproc_per_node=8 train_fsdp.py @ configs/150M/H100.toml
+uv  run torchrun --nproc_per_node=8 train_ddp.py @ configs/150M/H100.toml
+```
