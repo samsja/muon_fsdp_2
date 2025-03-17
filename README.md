@@ -60,3 +60,4 @@ uv  run torchrun --nproc_per_node=8 train_fsdp.py @ configs/7B/H100.toml
 
 
 
+![Screenshot from 2025-03-16 21-38-16](https://github.com/user-attachments/assets/5b93ec21-3e71-4f66-be47-7e07bc88c77e)
