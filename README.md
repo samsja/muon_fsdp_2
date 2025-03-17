@@ -2,7 +2,8 @@
 
 This codebase implement muon optimizer compatbile with fsdp2 as described in [this blog post](https://main-horse.github.io/posts/parallelizing-muon/)
 
-Original optimizer code credits to main-horse [here](https://gist.github.com/main-horse/7314170780e36f7443d1926418d75823)
+Most of the important code has been developed by main-horse [here](https://gist.github.com/main-horse/7314170780e36f7443d1926418d75823)
+This repo add the code into a training codebase and optimizer the communication part (do gather scatter instead of all_gather)
 
 ## Install
 
