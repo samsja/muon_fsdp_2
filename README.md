@@ -42,6 +42,17 @@ run 7b
 uv  run torchrun --nproc_per_node=8 train_fsdp.py @ configs/7B/H100.toml
 ```
 
+### benchmark
+
+| Model Size | GPUs | GPU Type | MFU |
+|------------|------|----------|-----|
+| 1B         | 8    | H100 sxm | 45% |
+| 7B         | 8    | H100 sxm | n/a |
+
+
+## convergence
+
+
 
 
 
