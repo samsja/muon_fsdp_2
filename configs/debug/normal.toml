@@ -1,0 +1,15 @@
+name_model = "debugmodel"
+wandb = false
+type_model = "llama2"
+
+[train]
+micro_bs = 8
+
+[optim]
+batch_size = 16
+warmup_steps = 10
+total_steps = 4
+
+[data]
+fake = true
+
