@@ -3,7 +3,7 @@ project = "debug_7B_zero_band"
 type_model = "llama2"
 
 [train]
-micro_bs = 1
+micro_bs = 4
 
 [optim]
 batch_size = 1024 #2M tokens bs
