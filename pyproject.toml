@@ -1,0 +1,26 @@
+[project]
+name = "zeroband"
+version = "0.1.0"
+description = "ZeroBand is a production ready codebase for decentralized training of LLM"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "torch",
+    "datasets>=3.0.0",
+    "transformers",
+    "pydantic_config @ git+https://github.com/samsja/pydantic_config.git@b7becc3",
+] 
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true # allow direct references to git repos in dependencies
+
+[tool.ruff]
+line-length = 140
+ignore = ["F722", "F821"]
+
+[tool.uv]
+dev-dependencies = ["ruff>=0.5.0", "pre-commit>=3.0.0","pytest>=7.0.0", "faker"]
