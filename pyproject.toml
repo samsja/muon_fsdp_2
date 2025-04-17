@@ -9,7 +9,8 @@ dependencies = [
     "datasets>=3.0.0",
     "transformers",
     "pydantic_config @ git+https://github.com/samsja/pydantic_config.git@b7becc3",
-    "wandb"
+    "wandb",
+    "torchdata"
 ] 
 
 [build-system]

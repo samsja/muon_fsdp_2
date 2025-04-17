@@ -1677,6 +1677,19 @@ wheels = [
 ]
 
 [[package]]
+name = "torchdata"
+version = "0.11.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+    { name = "torch" },
+    { name = "urllib3" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/95/d4/af694ef718aedbe95a72760ab9ff7a6a7a44ace2d7f70c27bfeb67c5c503/torchdata-0.11.0-py3-none-any.whl", hash = "sha256:52b940fbbe0e00fb21cabddf528449d1bec5bfb0d0823b7487b15f951658ee33", size = 61968 },
+]
+
+[[package]]
 name = "tqdm"
 version = "4.67.1"
 source = { registry = "https://pypi.org/simple" }
@@ -1953,6 +1966,7 @@ dependencies = [
     { name = "datasets" },
     { name = "pydantic-config" },
     { name = "torch" },
+    { name = "torchdata" },
     { name = "transformers" },
     { name = "wandb" },
 ]
@@ -1970,6 +1984,7 @@ requires-dist = [
     { name = "datasets", specifier = ">=3.0.0" },
     { name = "pydantic-config", git = "https://github.com/samsja/pydantic_config.git?rev=b7becc3" },
     { name = "torch" },
+    { name = "torchdata" },
     { name = "transformers" },
     { name = "wandb" },
 ]
