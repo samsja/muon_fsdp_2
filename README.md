@@ -22,7 +22,7 @@ source $HOME/.local/bin/env
 run debug
 
 ```bash
-uv  run torchrun --nproc_per_node=2 train_fsdp.py  @ configs/debug/normal.toml
+PRIME_DEBUG=1 uv  run torchrun --nproc_per_node=2 train_fsdp.py  @ configs/debug/normal.toml
 ```
 
 run 150
