@@ -33,8 +33,8 @@ from zeroband.world_info import get_world_info
 class MuonConfig(BaseConfig):
     type: Literal["muon"] = "muon"
     lr: float = 2e-2
-    wd: float = 0
-    beta: float = 0.95
+    wd: float = 0.01
+    momentum: float = 0.95
     ns_steps: int = 5
 
 
@@ -151,7 +151,7 @@ def train(config: Config):
     muon_group = dict(
         params=hidden_matrix_params,
         lr=config.optim.optim.lr,
-        beta=config.optim.optim.beta,
+        momentum=config.optim.optim.momentum,
         ns_steps=config.optim.optim.ns_steps,
         wd=config.optim.optim.wd,
         use_muon=True,

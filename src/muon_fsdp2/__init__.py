@@ -82,7 +82,7 @@ class Muon(torch.optim.Optimizer):
     This is a pruned implementation which uses the following hardcoded behaviors:
     * assumed used of 2D+ DTensor parameters, which will always be true if you use FSDP2.
     * nestrov momentum (on the input to NS)
-    * EMA momentum (unlike the original Muon, which uses .mul_(beta))
+    * EMA momentum (unlike the original Muon, which uses .mul_(momentum))
 
     Arguments:
         params: Params/groups to be optimized. Each group should have use_muon flag.
@@ -90,7 +90,7 @@ class Muon(torch.optim.Optimizer):
     For Muon groups (use_muon=True):
         lr: Learning rate.
         wd: Weight decay.
-        beta: momentum buffer decay rate.
+        momentum: momentum buffer decay rate.
         ns_steps: Newton-Schulz iteration steps.
         
     For Adam groups (use_muon=False):
@@ -101,7 +101,7 @@ class Muon(torch.optim.Optimizer):
     """
 
     def __init__(
-        self, params: ParamsT, *, lr: float | None = None, wd: float = 0.0, beta: float = 0.95, ns_steps: int = 5
+        self, params: ParamsT, *, lr: float | None = None, wd: float = 0.01, momentum: float = 0.95, ns_steps: int = 5
     ):
         # setup torch optimizer
         groups = paramst_to_groups(list(params))
@@ -115,7 +115,7 @@ class Muon(torch.optim.Optimizer):
                 # Muon defaults
                 group.setdefault("lr", lr or 0.02)
                 group.setdefault("wd", wd)
-                group.setdefault("beta", beta)
+                group.setdefault("momentum", momentum)
                 group.setdefault("ns_steps", ns_steps)
             else:
                 # Adam defaults
@@ -148,13 +148,13 @@ class Muon(torch.optim.Optimizer):
 
     def filter_group(self, group: dict) -> Generator[tuple[DTensor, DTensor, DTensor, int], None, None]:
         if group["use_muon"]:
-            pg, lr, wd, beta = group["params"], group["lr"], group["wd"], group["beta"]
+            pg, lr, wd, momentum = group["params"], group["lr"], group["wd"], group["momentum"]
             pg = [p for p in pg if p.grad is not None]
             list_p = [p.data for p in pg]
             list_g = [p.grad.flatten(1) for p in pg]
             list_m = [self.state[p]["m"] for p in pg]
-            torch._foreach_lerp_(list_m, list_g, 1 - beta)  # EMA momentum
-            torch._foreach_lerp_(list_g, list_m, beta)  # nestrov momentum (for NS input)
+            torch._foreach_lerp_(list_m, list_g, 1 - momentum)  # EMA momentum
+            torch._foreach_lerp_(list_g, list_m, momentum)  # nestrov momentum (for NS input)
             # Note: weight decay moved to deferred_work after NS
             yield from zip(list_p, list_g, list_m)
 
@@ -286,14 +286,15 @@ class MuonDDP(torch.optim.Optimizer):
 
     Arguments:
         lr: The learning rate used by the internal SGD.
+        wd: Weight decay.
         momentum: The momentum used by the internal SGD.
         nesterov: Whether to use Nesterov-style momentum in the internal SGD. (recommended)
         ns_steps: The number of Newton-Schulz iteration steps to use.
     """
-    def __init__(self, params, lr=0.02, weight_decay=0.01, momentum=0.95, nesterov=True, ns_steps=5, rank=0, world_size=1):
+    def __init__(self, params, lr=0.02, wd=0.01, momentum=0.95, nesterov=True, ns_steps=5, rank=0, world_size=1):
         self.rank = rank
         self.world_size = world_size
-        defaults = dict(lr=lr, weight_decay=weight_decay, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
+        defaults = dict(lr=lr, wd=wd, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
         
         # Handle different param formats
         if isinstance(params, list) and len(params) > 0:
@@ -315,7 +316,7 @@ class MuonDDP(torch.optim.Optimizer):
             if group["use_muon"]:
                 # Muon defaults
                 group["lr"] = group.get("lr", lr)
-                group["weight_decay"] = group.get("weight_decay", weight_decay)
+                group["wd"] = group.get("wd", wd)
                 group["momentum"] = group.get("momentum", momentum)
                 group["nesterov"] = group.get("nesterov", nesterov)
                 group["ns_steps"] = group.get("ns_steps", ns_steps)
@@ -345,7 +346,7 @@ class MuonDDP(torch.optim.Optimizer):
                 group["lr"] = group.get("lr", 3e-4)
                 group["betas"] = group.get("betas", (0.9, 0.95))
                 group["eps"] = group.get("eps", 1e-10)
-                group["weight_decay"] = group.get("weight_decay", weight_decay)
+                group["wd"] = group.get("wd", wd)
                 
             processed_groups.append(group)
             
@@ -357,7 +358,7 @@ class MuonDDP(torch.optim.Optimizer):
         for group in self.param_groups:
             if not group["use_muon"]:
                 lr = group["lr"]
-                weight_decay = group["weight_decay"]
+                wd = group["wd"]
                 betas = group["betas"]
                 eps = group["eps"]
                 
@@ -384,7 +385,7 @@ class MuonDDP(torch.optim.Optimizer):
                     )
                     
                     # Apply weight decay and update
-                    p.mul_(1 - lr * weight_decay)
+                    p.mul_(1 - lr * wd)
                     p.add_(update, alpha=-lr)
         
         # Handle Muon parameters with distributed processing
@@ -404,7 +405,7 @@ class MuonDDP(torch.optim.Optimizer):
                     handle.wait()
                     for p_world, g_world in zip(params_world, update_buffer_views):
                         # Apply weight decay after NS (matching reference implementation)
-                        p_world.mul_(1 - group["lr"] * group["weight_decay"])
+                        p_world.mul_(1 - group["lr"] * group["wd"])
                         p_world.add_(g_world.view_as(p_world),
                                      alpha=-group["lr"] * max(1, p_world.size(-2) / p_world.size(-1))**0.5)
                 for base_i in range(len(params))[::self.world_size]:
