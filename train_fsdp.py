@@ -12,7 +12,7 @@ from zeroband.data import TEST_VOCAB_SIZE, DataConfig, get_dataloader
 from zeroband.lr_scheduler import get_scheduler
 from zeroband.models.llama import get_model
 from zeroband.models.llama.model import create_block_mask_from_seqlens
-from zeroband.muon import Muon
+from muon_fsdp2 import Muon
 from zeroband.utils import (
     FakeTokenizer,
     PerfCounter,
@@ -204,7 +204,6 @@ def train(config: Config):
             loss = ce_loss / gradient_accumulation_steps
             loss.backward()
             loss_batch += loss.detach().clone()
-
 
         dist.all_reduce(tensor=loss_batch, op=dist.ReduceOp.AVG)
 

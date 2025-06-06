@@ -5,18 +5,56 @@ This codebase implement muon optimizer compatbile with fsdp2 as described in [th
 Most of the important code has been developed by main-horse [here](https://gist.github.com/main-horse/7314170780e36f7443d1926418d75823)
 This repo add the code into a training codebase and optimize the communication part (do gather scatter instead of all_gather)
 
+
+This repo is composed of two parts:
+
+- `src/muon_fsdp2` is the implementation of muon optimizer compatible with fsdp2
+- `src/zeroband` is the training codebase
+
+## Muon FSDP2 package
+
+this is a standalone package that can be used to train models with muon optimizer. 
+
+install the package
+
+```bash
+uv pip install -e ./src/muon_fsdp2
+```
+
+example usage
+
+```python
+from muon_fsdp2 import Muon
+
+optimizer = Muon(model.parameters(), lr=0.001)
+
+```
+
+## ZeroBand
+
+ZeroBand is a fork of [this repo](https://github.com/PrimeIntellect-ai/prime), a standalone training codebase for LLM, specifically designed for using fsdp2 and muon optimizer.
+
+
 ## Install
 
 ```bash
 export HF_TOKEN=
 ```
 
-then
+then use the default install script to install the dependencies
 
 ```
 curl -sSL https://raw.githubusercontent.com/samsja/muon_fsdp_2/main/install.sh | bash
 source $HOME/.local/bin/env
 
+```
+
+or do it manually
+
+```bash
+git clone https://github.com/samsja/muon_fsdp_2
+cd muon_fsdp_2
+uv sync
 ```
 
 run debug

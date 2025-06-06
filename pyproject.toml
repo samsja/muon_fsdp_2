@@ -10,12 +10,20 @@ dependencies = [
     "transformers",
     "pydantic_config @ git+https://github.com/samsja/pydantic_config.git@b7becc3",
     "wandb",
-    "torchdata"
-] 
+    "torchdata",
+    "muon-fsdp2",
+]
+
+
+
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.uv.sources]
+muon-fsdp2 = { path = "./src/muon_fsdp2", editable = true }
+
 
 [tool.hatch.metadata]
 allow-direct-references = true # allow direct references to git repos in dependencies
