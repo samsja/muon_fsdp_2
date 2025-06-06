@@ -140,21 +140,26 @@ def train(config: Config):
     head_params = [model.output.weight]
 
     # init the optimizer(s)
-    adam_params = [
-        dict(params=head_params, lr=0.008),
-        dict(params=embed_params, lr=0.6),
-        dict(params=scalar_params, lr=0.04),
+    # Adam parameter groups
+    adam_groups = [
+        dict(params=head_params, lr=0.008, use_muon=False, betas=(0.8, 0.95), eps=1e-10),
+        dict(params=embed_params, lr=0.6, use_muon=False, betas=(0.8, 0.95), eps=1e-10),
+        dict(params=scalar_params, lr=0.04, use_muon=False, betas=(0.8, 0.95), eps=1e-10),
     ]
-    optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
-    optimizer2 = Muon(
-        hidden_matrix_params,
+
+    # Muon parameter group
+    muon_group = dict(
+        params=hidden_matrix_params,
         lr=config.optim.optim.lr,
         beta=config.optim.optim.beta,
         ns_steps=config.optim.optim.ns_steps,
         wd=config.optim.optim.wd,
+        use_muon=True,
     )
 
-    optimizers = [optimizer2, optimizer1]
+    # Single unified optimizer
+    optimizer = Muon([*adam_groups, muon_group])
+    optimizers = [optimizer]
 
     schedulers = [
         get_scheduler(
