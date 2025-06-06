@@ -33,7 +33,19 @@ example usage
 ```python
 from muon_fsdp2 import Muon
 
-optimizer = Muon(model.parameters(), lr=0.001)
+
+optimizer = Muon([
+    dict(
+        params=model.square_params(),
+        lr=2e-2,
+        use_muon=True
+    ),
+    dict(
+        params=model.non_square_params(),
+        lr=3e-4,
+        use_muon=False
+    )
+])
 
 ```
 
