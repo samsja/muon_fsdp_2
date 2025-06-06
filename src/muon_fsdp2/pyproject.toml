@@ -5,5 +5,30 @@ description = "Muon FSDP2 is a implementation of Muon optimizer for FSDP2"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = ["torch"]
+authors = [
+    {name = "Sami Jaghouar", email = "sami.jaghouar@gmail.com"},
+]
+license = {file = "../../LICENSE"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+keywords = ["muon", "optimizer", "fsdp2", "pytorch", "deep-learning"]
+
+[project.urls]
+Homepage = "https://github.com/samsja/muon_fsdp_2"
+Repository = "https://github.com/samsja/muon_fsdp_2"
+Documentation = "https://github.com/samsja/muon_fsdp_2#muon-fsdp2-package"
+Issues = "https://github.com/samsja/muon_fsdp_2/issues"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
 
