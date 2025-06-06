@@ -33,8 +33,8 @@ from zeroband.world_info import get_world_info
 class MuonConfig(BaseConfig):
     type: Literal["muon"] = "muon"
     lr: float = 2e-2
-    wd: float = 0
-    beta: float = 0.95
+    wd: float = 0.01
+    momentum: float = 0.95
     ns_steps: int = 5
 
 
@@ -134,23 +134,30 @@ def train(config: Config):
     head_params = [model.module.output.weight]
 
     # init the optimizer(s)
-    adam_params = [
-        dict(params=head_params, lr=0.008),
-        dict(params=embed_params, lr=0.6),
-        dict(params=scalar_params, lr=0.04),
+    # Adam parameter groups
+    adam_groups = [
+        dict(params=head_params, lr=0.008, use_muon=False, betas=(0.8, 0.95), eps=1e-10),
+        dict(params=embed_params, lr=0.6, use_muon=False, betas=(0.8, 0.95), eps=1e-10),
+        dict(params=scalar_params, lr=0.04, use_muon=False, betas=(0.8, 0.95), eps=1e-10),
     ]
-    optimizer1 = torch.optim.Adam(adam_params, betas=(0.8, 0.95), eps=1e-10, fused=True)
-    optimizer2 = MuonDDP(
-        hidden_matrix_params,
+
+    # Muon parameter group
+    muon_group = dict(
+        params=hidden_matrix_params,
         lr=config.optim.optim.lr,
-        momentum=config.optim.optim.beta,
+        momentum=config.optim.optim.momentum,
         ns_steps=config.optim.optim.ns_steps,
-        weight_decay=config.optim.optim.wd,
+        wd=config.optim.optim.wd,
+        use_muon=True,
+    )
+
+    # Single unified optimizer
+    optimizer = MuonDDP(
+        [*adam_groups, muon_group],
         rank=world_info.local_rank,
         world_size=world_info.local_world_size,
     )
-
-    optimizers = [optimizer2, optimizer1]
+    optimizers = [optimizer]
 
     schedulers = [
         get_scheduler(
