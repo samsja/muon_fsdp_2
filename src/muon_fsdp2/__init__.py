@@ -14,6 +14,11 @@ from torch.distributed import gather, scatter
 import torch.distributed as dist
 from torch import Tensor
 
+__version__ = "0.1.0"
+
+__all__ = ["Muon", "MuonDDP"]
+
+
 @torch.compile(fullgraph=True)
 def nsloop_torch(X: torch.Tensor, steps: int, *, a=3.4445, b=-4.7750, c=2.0315):
     """
