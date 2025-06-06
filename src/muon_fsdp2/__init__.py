@@ -14,7 +14,7 @@ from torch.distributed import gather, scatter
 import torch.distributed as dist
 from torch import Tensor
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = ["Muon", "MuonDDP"]
 
