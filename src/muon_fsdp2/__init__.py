@@ -155,7 +155,7 @@ class Muon(torch.optim.Optimizer):
             list_m = [self.state[p]["m"] for p in pg]
             torch._foreach_lerp_(list_m, list_g, 1 - beta)  # EMA momentum
             torch._foreach_lerp_(list_g, list_m, beta)  # nestrov momentum (for NS input)
-            torch._foreach_mul_(list_p, 1 - lr * wd)  # weight decay
+            # Note: weight decay moved to deferred_work after NS
             yield from zip(list_p, list_g, list_m)
 
     @torch.no_grad()
@@ -197,7 +197,7 @@ class Muon(torch.optim.Optimizer):
 
         dq = deque()
 
-        def deferred_work(p, g, g_full_block, spec, lr, src_rank, rank):
+        def deferred_work(p, g, g_full_block, spec, lr, wd, src_rank, rank):
             if rank == src_rank:
                 chunks = list(g_full_block.chunk(ws, dim=0))
                 scatter(g.to_local(), chunks, src=src_rank, async_op=True)
@@ -205,6 +205,8 @@ class Muon(torch.optim.Optimizer):
                 scatter(g.to_local(), None, src=src_rank, async_op=True) 
 
        
+            # Apply weight decay after NS (matching reference implementation)
+            p.mul_(1 - lr * wd)
             # update parameter with NS'd grad
             lr_scale = max(1, p.size(-2) / p.size(-1)) ** 0.5
             p.add_(g, alpha=-lr * lr_scale)
@@ -226,7 +228,7 @@ class Muon(torch.optim.Optimizer):
                     gather(g_local, None, dst=dest_rank, async_op=True)
                     g_full_block = None
                     
-                dq.append([p, g, g_full_block, spec, group["lr"], dest_rank, r])
+                dq.append([p, g, g_full_block, spec, group["lr"], group["wd"], dest_rank, r])
                 if len(dq) > prefetch_factor:
                     deferred_work(*dq.popleft())
                 i += 1
@@ -401,6 +403,7 @@ class MuonDDP(torch.optim.Optimizer):
                 def update_prev(): # optimized Muon implementation contributed by @YouJiacheng
                     handle.wait()
                     for p_world, g_world in zip(params_world, update_buffer_views):
+                        # Apply weight decay after NS (matching reference implementation)
                         p_world.mul_(1 - group["lr"] * group["weight_decay"])
                         p_world.add_(g_world.view_as(p_world),
                                      alpha=-group["lr"] * max(1, p_world.size(-2) / p_world.size(-1))**0.5)
