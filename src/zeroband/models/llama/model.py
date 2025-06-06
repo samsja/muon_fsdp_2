@@ -14,6 +14,7 @@
 import contextlib
 from dataclasses import dataclass
 from typing import Literal, Optional, Tuple
+import os
 
 import torch
 import torch.nn.functional as F
@@ -23,7 +24,9 @@ from zeroband.models.norms import build_norm
 from torch.nn.attention.flex_attention import create_block_mask, flex_attention, BlockMask, _DEFAULT_SPARSE_BLOCK_SIZE
 from torch.nn.attention import SDPBackend, sdpa_kernel
 
-_flex_attention_compiled = torch.compile(flex_attention, dynamic=False, mode="max-autotune-no-cudagraphs")
+mode = "max-autotune-no-cudagraphs" if  "PRIME_DEBUG" not in os.environ else None
+
+_flex_attention_compiled = torch.compile(flex_attention, dynamic=False, mode=mode)
 
 
 # copied from https://github.com/pytorch/torchtune/blob/f2bd4bc25b24587aef40f486087412b9da8f1d94/torchtune/modules/attention_utils.py#L27
