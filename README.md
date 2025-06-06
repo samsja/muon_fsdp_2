@@ -15,11 +15,18 @@ This repo is composed of two parts:
 
 this is a standalone package that can be used to train models with muon optimizer. 
 
-install the package
+install the package from pypi
 
 ```bash
-uv pip install -e ./src/muon_fsdp2
+uv pip install muon-fsdp2
 ```
+
+or from source
+
+```bash
+uv pip install git+https://github.com/samsja/muon_fsdp_2.git@main
+```
+
 
 example usage
 
