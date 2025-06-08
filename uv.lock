@@ -669,7 +669,7 @@ wheels = [
 
 [[package]]
 name = "muon-fsdp2"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "src/muon_fsdp2" }
 dependencies = [
     { name = "torch" },
@@ -1951,7 +1951,7 @@ wheels = [
 
 [[package]]
 name = "zeroband"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "datasets" },

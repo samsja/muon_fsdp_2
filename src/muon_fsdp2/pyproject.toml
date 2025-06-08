@@ -1,6 +1,6 @@
 [project]
 name = "muon_fsdp2"
-version = "0.2.0"
+version = "0.2.1"
 description = "Muon FSDP2 is a implementation of Muon optimizer for FSDP2"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -30,5 +30,8 @@ Issues = "https://github.com/samsja/muon_fsdp_2/issues"
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["muon_fsdp2"]
 
 
