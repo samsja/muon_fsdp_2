@@ -1,19 +1,19 @@
 # Muon fsdp 2
 
-This codebase implement muon optimizer compatbile with fsdp2 as described in [this blog post](https://main-horse.github.io/posts/parallelizing-muon/)
+This codebase implements the muon optimizer compatible with fsdp2 as described in [this blog post](https://main-horse.github.io/posts/parallelizing-muon/)
 
-Most of the important code has been developed by main-horse [here](https://gist.github.com/main-horse/7314170780e36f7443d1926418d75823)
-This repo add the code into a training codebase and optimize the communication part (do gather scatter instead of all_gather)
+Most of the important code was developed by main-horse [here](https://gist.github.com/main-horse/7314170780e36f7443d1926418d75823)
+This repo integrates that code into a training codebase and optimizes the communication part (we do gather scatter instead of all_gather)
 
 
 This repo is composed of two parts:
 
-- `src/muon_fsdp2` is the implementation of muon optimizer compatible with fsdp2
+- `src/muon_fsdp2` is the implementation of the muon optimizer compatible with fsdp2
 - `src/zeroband` is the training codebase
 
 ## Muon FSDP2 package
 
-this is a standalone package that can be used to train models with muon optimizer. 
+this is a standalone package that can be used to train models with the muon optimizer. 
 
 install the package from pypi
 
@@ -51,7 +51,7 @@ optimizer = Muon([
 
 ## ZeroBand
 
-ZeroBand is a fork of [this repo](https://github.com/PrimeIntellect-ai/prime), a standalone training codebase for LLM, specifically designed for using fsdp2 and muon optimizer.
+ZeroBand is a fork of [this repo](https://github.com/PrimeIntellect-ai/prime), a standalone training codebase for LLMs specifically designed for using fsdp2 and muon optimizer.
 
 
 ## Install
