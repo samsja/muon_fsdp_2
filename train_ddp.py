@@ -151,6 +151,7 @@ def train(config: Config):
         use_muon=True,
     )
 
+    raise NotImplementedError("MuonDDP is not implemented yet")
     # Single unified optimizer
     optimizer = MuonDDP(
         [*adam_groups, muon_group],

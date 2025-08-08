@@ -37,15 +37,15 @@ from muon_fsdp2 import Muon
 optimizer = Muon([
     dict(
         params=model.square_params(),
-        lr=2e-2,
+        lr=1e-3,
         use_muon=True
     ),
     dict(
         params=model.non_square_params(),
-        lr=3e-4,
+        lr=1e-3,
         use_muon=False
     )
-])
+]) 
 
 ```
 
@@ -101,6 +101,7 @@ uv  run torchrun --nproc_per_node=8 train_fsdp.py @ configs/7B/H100.toml
 ```
 
 ### benchmark
+old code not updated yet
 
 | Model Size | GPUs | GPU Type | MFU |
 |------------|------|----------|-----|
@@ -109,6 +110,8 @@ uv  run torchrun --nproc_per_node=8 train_fsdp.py @ configs/7B/H100.toml
 
 
 ## convergence 150M
+
+old code not updated yet
 
 ![Screenshot from 2025-03-16 21-38-16](https://github.com/user-attachments/assets/5b93ec21-3e71-4f66-be47-7e07bc88c77e)
 

@@ -153,7 +153,7 @@ def train(config: Config):
         lr=config.optim.optim.lr,
         momentum=config.optim.optim.momentum,
         ns_steps=config.optim.optim.ns_steps,
-        wd=config.optim.optim.wd,
+        weight_decay=config.optim.optim.wd,
         use_muon=True,
     )
 

@@ -4,19 +4,17 @@
 
 # credits to https://gist.github.com/main-horse/7314170780e36f7443d1926418d75823
 
-from typing import Generator
-from collections import deque
-
+import math
+from typing import Protocol
 import torch
-from torch.optim.optimizer import ParamsT
-from torch.distributed.tensor import DTensor, Shard
-from torch.distributed import gather, scatter
-import torch.distributed as dist
-from torch import Tensor
+from torch.distributed.tensor import DTensor
+from torch.distributed import  gather, scatter
+from collections import deque
 
 __version__ = "0.2.1"
 
-__all__ = ["Muon", "MuonDDP"]
+__all__ = ["Muon"]
+
 
 
 @torch.compile(fullgraph=True)
@@ -35,210 +33,7 @@ def nsloop_torch(X: torch.Tensor, steps: int, *, a=3.4445, b=-4.7750, c=2.0315):
         X = a * X + B @ X
     return X
 
-
-def zeropower_via_newtonschulz(G, steps=10, eps=1e-7, f_iter=nsloop_torch):
-    X = G.bfloat16()
-    if G.size(-2) > G.size(-1):
-        X = X.mT
-        # DTensor will NaN for sharded compute on Shard(1)
-        if isinstance(X, DTensor):
-            p = [Shard(0) if isinstance(p, Shard) else p for p in X._spec.placements]
-            X = X.redistribute(placements=p)
-    X = X / (X.norm(dim=(-2, -1), keepdim=True) + eps)  # ensure top singular value <= 1
-    X = f_iter(X, steps)
-    return X if G.size(-2) <= G.size(-1) else X.mT
-
-
-def paramst_to_groups(params: ParamsT) -> list[dict]:
-    if all(isinstance(p, dict) for p in params):
-        return params
-    if all(isinstance(p, torch.nn.Parameter) for p in params):
-        return [dict(params=params)]
-    if all(isinstance(p, list) for p in params):
-        return [dict(params=p) for p in params]
-    raise ValueError(f"Invalid paramst_to_groups input: {params}")
-
-
-def adam_update(grad, buf1, buf2, step, betas, eps):
-    buf1.lerp_(grad, 1 - betas[0])
-    buf2.lerp_(grad.square(), 1 - betas[1])
-    buf1c = buf1 / (1 - betas[0]**step)
-    buf2c = buf2 / (1 - betas[1]**step)
-    return buf1c / (buf2c.sqrt() + eps)
-
-
-class Muon(torch.optim.Optimizer):
-    """
-    Muon - MomentUm Orthogonalized by Newton-schulz
-    https://kellerjordan.github.io/posts/muon/
-
-    This optimizer supports both Muon and Adam optimization through the use_muon flag.
-    
-    Some warnings:
-    - Muon should not be used for the embedding layer, the final fully connected layer,
-    or any {0,1}-D parameters; those should use Adam (use_muon=False).
-    - To use it with 4D convolutional filters, it works well to just flatten their last 3 dimensions.
-
-    This is a pruned implementation which uses the following hardcoded behaviors:
-    * assumed used of 2D+ DTensor parameters, which will always be true if you use FSDP2.
-    * nestrov momentum (on the input to NS)
-    * EMA momentum (unlike the original Muon, which uses .mul_(momentum))
-
-    Arguments:
-        params: Params/groups to be optimized. Each group should have use_muon flag.
-
-    For Muon groups (use_muon=True):
-        lr: Learning rate.
-        wd: Weight decay.
-        momentum: momentum buffer decay rate.
-        ns_steps: Newton-Schulz iteration steps.
-        
-    For Adam groups (use_muon=False):
-        lr: Learning rate.
-        betas: Adam beta parameters.
-        eps: Adam epsilon.
-        wd: Weight decay.
-    """
-
-    def __init__(
-        self, params: ParamsT, *, lr: float | None = None, wd: float = 0.01, momentum: float = 0.95, ns_steps: int = 5
-    ):
-        # setup torch optimizer
-        groups = paramst_to_groups(list(params))
-        
-        # Process groups to set defaults based on use_muon flag
-        for group in groups:
-            if "use_muon" not in group:
-                group["use_muon"] = True  # default to Muon
-                
-            if group["use_muon"]:
-                # Muon defaults
-                group.setdefault("lr", lr or 0.02)
-                group.setdefault("wd", wd)
-                group.setdefault("momentum", momentum)
-                group.setdefault("ns_steps", ns_steps)
-            else:
-                # Adam defaults
-                group.setdefault("lr", lr or 3e-4)
-                group.setdefault("betas", (0.9, 0.95))
-                group.setdefault("eps", 1e-10)
-                group.setdefault("wd", wd)
-                
-        super().__init__(groups, {})
-        
-        # init buffers ahead of time
-        for pg in self.param_groups:
-            for p in pg["params"]:
-                assert isinstance(p, DTensor), "We only support DTensor. Use FSDP2."
-                self.mesh = p._spec.device_mesh
-                
-                if pg["use_muon"]:
-                    self.state[p] = dict(m=torch.zeros_like(p))
-                    if p.ndim < 2:
-                        raise ValueError(f"0/1D parameters are banned from Muon; user provided {p.shape=}")
-                    if p.ndim > 2:
-                        print(f"WARNING: muon used for {p.shape=}")
-                else:
-                    # Adam state
-                    self.state[p] = dict(
-                        exp_avg=torch.zeros_like(p),
-                        exp_avg_sq=torch.zeros_like(p),
-                        step=0
-                    )
-
-    def filter_group(self, group: dict) -> Generator[tuple[DTensor, DTensor, DTensor, int], None, None]:
-        if group["use_muon"]:
-            pg, lr, wd, momentum = group["params"], group["lr"], group["wd"], group["momentum"]
-            pg = [p for p in pg if p.grad is not None]
-            list_p = [p.data for p in pg]
-            list_g = [p.grad.flatten(1) for p in pg]
-            list_m = [self.state[p]["m"] for p in pg]
-            torch._foreach_lerp_(list_m, list_g, 1 - momentum)  # EMA momentum
-            torch._foreach_lerp_(list_g, list_m, momentum)  # nestrov momentum (for NS input)
-            # Note: weight decay moved to deferred_work after NS
-            yield from zip(list_p, list_g, list_m)
-
-    @torch.no_grad()
-    def step(self, *, prefetch_factor: int = 8):  # <-- changeme to 1 if you have numerical bugs
-        # Handle Adam parameters first (simpler, no distributed ops)
-        for group in self.param_groups:
-            if not group["use_muon"]:
-                lr, wd = group["lr"], group["wd"]
-                betas, eps = group["betas"], group["eps"]
-                
-                for p in group["params"]:
-                    if p.grad is None:
-                        continue
-                        
-                    state = self.state[p]
-                    state["step"] += 1
-                    
-                    # Adam update
-                    update = adam_update(
-                        p.grad, 
-                        state["exp_avg"], 
-                        state["exp_avg_sq"],
-                        state["step"], 
-                        betas, 
-                        eps
-                    )
-                    
-                    # Apply weight decay and update
-                    p.mul_(1 - lr * wd)
-                    p.add_(update, alpha=-lr)
-        
-        # Handle Muon parameters with distributed Newton-Schulz
-        muon_groups = [g for g in self.param_groups if g["use_muon"]]
-        if not muon_groups:
-            return
-            
-        # fsdp sharding mesh dim is always last
-        r, ws = self.mesh.get_local_rank(-1), self.mesh.size(-1)
-
-        dq = deque()
-
-        def deferred_work(p, g, g_full_block, spec, lr, wd, src_rank, rank):
-            if rank == src_rank:
-                chunks = list(g_full_block.chunk(ws, dim=0))
-                scatter(g.to_local(), chunks, src=src_rank, async_op=True)
-            else:
-                scatter(g.to_local(), None, src=src_rank, async_op=True) 
-
-       
-            # Apply weight decay after NS (matching reference implementation)
-            p.mul_(1 - lr * wd)
-            # update parameter with NS'd grad
-            lr_scale = max(1, p.size(-2) / p.size(-1)) ** 0.5
-            p.add_(g, alpha=-lr * lr_scale)
-
-        i = 0
-        for group in muon_groups:
-            for p, g, m in self.filter_group(group):
-                spec = g._spec
-                dest_rank = i  % ws
-                if dest_rank == r:
-                    gather_lists = [torch.zeros_like(g.to_local()) for _ in range(ws)]
-                    gather(g.to_local(), gather_lists, dst=dest_rank, async_op=True) 
-                    g_full_block = torch.cat(gather_lists, dim=0)
-                    g_full_block.copy_(zeropower_via_newtonschulz(g_full_block, steps=group["ns_steps"]))
-                    g_full_block = g_full_block.view_as(p).type_as(p)
-                else:
-                    
-                    g_local = g.to_local()
-                    gather(g_local, None, dst=dest_rank, async_op=True)
-                    g_full_block = None
-                    
-                dq.append([p, g, g_full_block, spec, group["lr"], group["wd"], dest_rank, r])
-                if len(dq) > prefetch_factor:
-                    deferred_work(*dq.popleft())
-                i += 1
-        for ls in dq:
-            deferred_work(*ls)
-
-
-
-
-def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
+def zeropower_via_newtonschulz5(G, steps: int):
     """
     Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
     quintic iteration whose coefficients are selected to maximize the slope at zero. For the purpose
@@ -257,176 +52,285 @@ def zeropower_via_newtonschulz5(G: Tensor, steps: int) -> Tensor:
     # Ensure spectral norm is at most 1
     X = X / (X.norm(dim=(-2, -1), keepdim=True) + 1e-7)
     # Perform the NS iterations
-    for _ in range(steps):
-        A = X @ X.mT
-        B = b * A + c * A @ A # quintic computation strategy adapted from suggestion by @jxbz, @leloykun, and @YouJiacheng
-        X = a * X + B @ X
+    X = nsloop_torch(X, steps, a=a, b=b, c=c)
     
     if G.size(-2) > G.size(-1):
         X = X.mT
     return X
 
-class MuonDDP(torch.optim.Optimizer):
+def apply_momentum(grad, momentum, beta, nesterov):
+    momentum.lerp_(grad, 1 - beta)
+    update = grad.lerp_(momentum, beta) if nesterov else momentum
+    if update.ndim == 4: # for the case of conv filters
+        update = update.view(len(update), -1)
+    return update
+
+def apply_scaling(grad, rms_scale=False ):
+    if rms_scale:
+        # https://github.com/MoonshotAI/Moonlight/blob/5afcb6911077e7f182d05865fe90d9f39abcbcbd/examples/toy_train.py#L146
+        grad *= 0.2 * math.sqrt(max(grad.shape[1], grad.shape[0]))
+        return grad
+    else:
+        # https://github.com/KellerJordan/Muon/blob/f90a42b28e00b8d9d2d05865fe90d9f39abcbcbd/muon.py#L40
+        grad *= max(1, grad.size(-2) / grad.size(-1))**0.5
+        return grad
+
+def adam_update(grad, buf1, buf2, step, betas, eps):
+    buf1.lerp_(grad, 1 - betas[0])
+    buf2.lerp_(grad.square(), 1 - betas[1])
+    buf1c = buf1 / (1 - betas[0]**step)
+    buf2c = buf2 / (1 - betas[1]**step)
+    return buf1c / (buf2c.sqrt() + eps)
+
+
+
+class Work(Protocol):
+    
+    def __init__(self, param, state, group, index: int):
+        ...
+    
+    def start(self):
+        ...
+    
+    def finish(self):
+        ...
+    
+    
+class Fsdp1dWork:
     """
-    Muon - MomentUm Orthogonalized by Newton-schulz
-
-    https://kellerjordan.github.io/posts/muon/
-
-    Muon internally runs standard SGD-momentum, and then performs an orthogonalization post-
-    processing step, in which each 2D parameter's update is replaced with the nearest orthogonal
-    matrix. To efficiently orthogonalize each update, we use a Newton-Schulz iteration, which has
-    the advantage that it can be stably run in bfloat16 on the GPU.
-
-    This optimizer supports both Muon and Adam optimization through the use_muon flag.
-
-    Some warnings:
-    - This optimizer should not be used for the embedding layer, the final fully connected layer,
-    or any {0,1}-D parameters; those should all be optimized by a standard method (e.g., AdamW).
-    - To use it with 4D convolutional filters, it works well to just flatten their last 3 dimensions.
-
-    Arguments:
-        lr: The learning rate used by the internal SGD.
-        wd: Weight decay.
-        momentum: The momentum used by the internal SGD.
-        nesterov: Whether to use Nesterov-style momentum in the internal SGD. (recommended)
-        ns_steps: The number of Newton-Schulz iteration steps to use.
+    muon handle for fsdp2 1d mesh.
     """
-    def __init__(self, params, lr=0.02, wd=0.01, momentum=0.95, nesterov=True, ns_steps=5, rank=0, world_size=1):
-        self.rank = rank
-        self.world_size = world_size
-        defaults = dict(lr=lr, wd=wd, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps)
+    
+    def __init__(self, param, state, group, index: int):
+        self.param = param
+        self.state = state
+        self.group = group
         
-        # Handle different param formats
-        if isinstance(params, list) and len(params) > 0:
-            if isinstance(params[0], dict):
-                # Already param groups
-                param_groups = params
-            else:
-                # List of parameters, create default group
-                param_groups = [dict(params=params, use_muon=True)]
-        else:
-            raise ValueError("params must be a list of parameters or parameter groups")
+        self.index = index
+    
+        self._intermediate_state = None
+    
+    def start(self):
+
+        self.param.grad = apply_momentum(self.param.grad, self.state["momentum_buffer"] , self.group["momentum"], self.group["nesterov"])
+        
+        grad = self.param.grad
+        assert isinstance(grad, DTensor), "only supports DTensor parameters"
+        assert grad.device_mesh.ndim == 1, "only supports 1D mesh"
+        
+        rank = grad.device_mesh.get_rank()
+        world_size = grad.device_mesh.size()
+        pg = grad.device_mesh.get_group()
+        
+        dest_rank = self.index % world_size
+        
             
-        # Process groups and set defaults based on use_muon
-        processed_groups = []
+        if rank == dest_rank:
+            gather_lists = [torch.zeros_like(input=grad.to_local()) for _ in range(world_size)]
+            gather_handle = gather(grad.to_local(), gather_lists, group_dst=dest_rank, group=pg, async_op=True)
+            
+        else:
+            gather_lists = None
+            gather_handle = gather(grad.to_local(), None, group_dst=dest_rank, group=pg, async_op=True)
+            
+        self._intermediate_state = [dest_rank, gather_handle, gather_lists]
+
+    def finish(self):
+        
+        assert self._intermediate_state is not None, "gather work must be called first"
+        
+        grad = self.param.grad
+        rank = grad.device_mesh.get_rank()
+        world_size = grad.device_mesh.size()
+        pg = grad.device_mesh.get_group()
+        
+        dest_rank, gather_handle, gather_lists = self._intermediate_state
+        gather_handle.wait()
+        if rank == dest_rank:
+            g_full_block = torch.cat(gather_lists, dim=0)
+            g_full_block.copy_(zeropower_via_newtonschulz5(g_full_block, self.group["ns_steps"]))
+            g_full_block = g_full_block.type_as(grad)
+            chunks = list(g_full_block.chunk(chunks=world_size, dim=0))
+            scatter(grad.to_local(), scatter_list=chunks, src=dest_rank, group=pg, async_op=False)
+        else:
+            scatter(grad.to_local(), None, src=dest_rank, group=pg, async_op=False)
+        
+        update = apply_scaling(grad, self.group["rms_scale"])
+
+        self.param.mul_(1 - self.group["lr"] * self.group["weight_decay"])
+        self.param.add_(update.reshape(self.param.shape), alpha=-self.group["lr"])
+
+
+class TpFsdp2dWork:
+    """
+    Muon work for TP + FSDP mesh
+    """
+    
+    def __init__(self, param, state, group, index: int):
+        raise NotImplementedError("not implemented")
+    
+class EpFsdp2dWork:
+    """
+    Muon work for EP mesh
+    """
+    
+    def __init__(self, param, state, group, index: int):
+        raise NotImplementedError("not implemented")
+    
+class TpEpFsdp3dWork:
+    """
+    Muon work for TP + EP mesh
+    """
+    
+    def __init__(self, param, state, group, index: int):
+        raise NotImplementedError("not implemented")
+
+class SingelDeviceWork:
+    """
+    muon handle for single device.
+    """
+    
+    def __init__(self, param, state, group, index: int):
+        self.param = param
+        self.state = state
+        self.group = group
+        
+    def start(self):
+        update = muon_update(self.param.grad, self.state["momentum_buffer"], self.group["momentum"], self.group["nesterov"], self.group["ns_steps"], self.group["rms_scale"])
+        self.param.mul_(1 - self.group["lr"] * self.group["weight_decay"])
+        self.param.add_(update.reshape(self.param.shape), alpha=-self.group["lr"])
+        
+    def finish(self):
+        pass
+    
+    
+class Muon(torch.optim.Optimizer):
+    """
+    DTensor variant of Muon, original code https://github.com/KellerJordan/Muon/blob/f90a42b28e00b8d9d2d05865fe90d9f39abcbcbd/muon.py
+    also support single device variant.
+    
+    Notable changes:
+        - add rms_scale argument to the optimizer following the moonlight paper https://arxiv.org/abs/2502.16982
+    
+    example usage:
+    
+    ```python
+    
+    from muon_fsdp2 import Muon
+
+
+    optimizer = Muon([
+        dict(
+            params=model.square_params(),
+            lr=1e-3,
+            use_muon=True
+        ),
+        dict(
+            params=model.non_square_params(),
+            lr=1e-3,
+            use_muon=False
+        )
+    ])   
+    ```
+    
+    
+    param_groups args:
+        lr: learning rate
+        momentum: momentum
+        weight_decay: weight decay
+        use_muon: whether to use muon
+        rms_scale: whether to scale the gradient by the RMS of the gradient . If true use the rms scale from the moonlight paper.
+                https://github.com/MoonshotAI/Moonlight/blob/5afcb6911077e7f182d1d7faa3c2cd45acba4666/examples/toy_train.py#L146
+                This variant adjust the update so that the RMS match the one of adam, allowing to only have one learning rate for all parameters.
+
+    """
+    def __init__(self, param_groups):
         for group in param_groups:
-            if "use_muon" not in group:
-                group["use_muon"] = True
-                
+            assert "use_muon" in group
             if group["use_muon"]:
-                # Muon defaults
-                group["lr"] = group.get("lr", lr)
-                group["wd"] = group.get("wd", wd)
-                group["momentum"] = group.get("momentum", momentum)
-                group["nesterov"] = group.get("nesterov", nesterov)
-                group["ns_steps"] = group.get("ns_steps", ns_steps)
-                
-                # Sort muon params by size for efficient distribution
-                group["params"] = sorted(list(group["params"]), key=lambda x: x.numel(), reverse=True)
-                
-                # Create update buffers for each unique size in muon params
-                size_to_params = {}
-                for p in group["params"]:
-                    size = p.numel()
-                    if size not in size_to_params:
-                        size_to_params[size] = []
-                    size_to_params[size].append(p)
-                
-                group["size_groups"] = []
-                for size, params_list in size_to_params.items():
-                    b = torch.empty(world_size, size, dtype=torch.bfloat16, device="cuda")
-                    size_group = {
-                        "params": params_list,
-                        "update_buffer": b,
-                        "update_buffer_views": [b[i] for i in range(world_size)]
-                    }
-                    group["size_groups"].append(size_group)
+                # defaults
+                group["lr"] = group.get("lr", 0.02)
+                group["momentum"] = group.get("momentum", 0.95)
+                group["weight_decay"] = group.get("weight_decay", 0)
+                group["rms_scale"] = group.get("rms_scale", True)
+                group["nesterov"] = group.get("nesterov", True)
+                group["ns_steps"] = group.get("ns_steps", 5)
+                assert set(group.keys()) == set(["params", "lr", "momentum", "weight_decay", "use_muon", "rms_scale", "nesterov", "ns_steps"])
             else:
-                # Adam defaults
+                # defaults
                 group["lr"] = group.get("lr", 3e-4)
                 group["betas"] = group.get("betas", (0.9, 0.95))
                 group["eps"] = group.get("eps", 1e-10)
-                group["wd"] = group.get("wd", wd)
-                
-            processed_groups.append(group)
-            
-        super().__init__(processed_groups, {})
+                group["weight_decay"] = group.get("weight_decay", 0)
+                assert set(group.keys()) == set(["params", "lr", "betas", "eps", "weight_decay", "use_muon"])
+        super().__init__(param_groups, dict())
 
+    def _get_work_class(self, p: torch.Tensor) -> tuple[type[Work], int]:
+        """
+        dispatch the work class based on the mesh dimension.
+        """
+        if isinstance(p, DTensor):
+            if p.device_mesh.ndim == 1:
+                return Fsdp1dWork, 8
+            elif p.device_mesh.ndim == 2:
+                return TpFsdp2dWork, 8
+            else:
+                raise ValueError(f"Unsupported mesh dimension: {p.device_mesh.ndim}")
+        else:
+            return SingelDeviceWork, 1
+        
     @torch.no_grad()
-    def step(self):
-        # Handle Adam parameters first
+    def step(self, closure=None):
+
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+        
+        
+        dq: deque[Work] = deque()
+
         for group in self.param_groups:
-            if not group["use_muon"]:
-                lr = group["lr"]
-                wd = group["wd"]
-                betas = group["betas"]
-                eps = group["eps"]
-                
+            
+            if group["use_muon"]:
+                for i ,p in enumerate(group["params"]):
+                    if p.grad is None:
+                        # continue
+                        p.grad = torch.zeros_like(p)  # Force synchronization
+                    state = self.state[p]
+                    if len(state) == 0:
+                        state["momentum_buffer"] = torch.zeros_like(p)
+                    
+                    class_work, prefetch_factor = self._get_work_class(p)
+                        
+                    work = class_work(p, state, group, i)
+                    work.start()
+                    dq.append(work)
+                    
+                    
+                    if len(dq) > prefetch_factor:
+                        dq.popleft().finish()
+            else:
                 for p in group["params"]:
                     if p.grad is None:
-                        continue
-                        
+                        # continue
+                        p.grad = torch.zeros_like(p)  # Force synchronization
                     state = self.state[p]
-                    if "exp_avg" not in state:
-                        state["exp_avg"] = torch.zeros_like(p.grad)
-                        state["exp_avg_sq"] = torch.zeros_like(p.grad)
+                    if len(state) == 0:
+                        state["exp_avg"] = torch.zeros_like(p)
+                        state["exp_avg_sq"] = torch.zeros_like(p)
                         state["step"] = 0
-                        
                     state["step"] += 1
-                    
-                    # Adam update
-                    update = adam_update(
-                        p.grad,
-                        state["exp_avg"],
-                        state["exp_avg_sq"],
-                        state["step"],
-                        betas,
-                        eps
-                    )
-                    
-                    # Apply weight decay and update
-                    p.mul_(1 - lr * wd)
-                    p.add_(update, alpha=-lr)
-        
-        # Handle Muon parameters with distributed processing
-        for group in self.param_groups:
-            if not group["use_muon"]:
-                continue
-                
-            # Process each size group separately
-            for size_group in group["size_groups"]:
-                update_buffer: Tensor = size_group["update_buffer"]
-                update_buffer_views: list[Tensor] = size_group["update_buffer_views"]
-                params: list[Tensor] = size_group["params"]
-                
-                handle = None
-                params_world = None
-                def update_prev(): # optimized Muon implementation contributed by @YouJiacheng
-                    handle.wait()
-                    for p_world, g_world in zip(params_world, update_buffer_views):
-                        # Apply weight decay after NS (matching reference implementation)
-                        p_world.mul_(1 - group["lr"] * group["wd"])
-                        p_world.add_(g_world.view_as(p_world),
-                                     alpha=-group["lr"] * max(1, p_world.size(-2) / p_world.size(-1))**0.5)
-                for base_i in range(len(params))[::self.world_size]:
-                    if base_i + self.rank < len(params):
-                        p = params[base_i + self.rank]
-                        g = p.grad
-                        assert g is not None
-                        state = self.state[p]
-                        if "momentum_buffer" not in state:
-                            state["momentum_buffer"] = torch.zeros_like(g)
-                        buf: Tensor = state["momentum_buffer"]
-                        buf.lerp_(g, 1 - group["momentum"])
-                        g = g.lerp_(buf, group["momentum"]) if group["nesterov"] else buf
-                        if g.ndim == 4: # for the case of conv filters
-                            g = g.view(len(g), -1)
-                        g = zeropower_via_newtonschulz5(g, steps=group["ns_steps"]).flatten()
-                    else:
-                        g = update_buffer_views[self.rank]
-                    if base_i > 0:
-                        update_prev() # async all_gather instead of sync all_reduce by @YouJiacheng
-                    handle = dist.all_gather_into_tensor(update_buffer, g, async_op=True)
-                    params_world = params[base_i : base_i + self.world_size]
-                if params:  # Only call update_prev if we have params
-                    update_prev()
+                    update = adam_update(p.grad, state["exp_avg"], state["exp_avg_sq"],
+                                         state["step"], group["betas"], group["eps"])
+                    p.mul_(1 - group["lr"] * group["weight_decay"])
+                    p.add_(update, alpha=-group["lr"])
+
+        for work in dq:
+            work.finish()
+            
+        return loss
+    
+
+
+    
