@@ -22,7 +22,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.uv.sources]
-muon-fsdp2 = { path = "./src/muon_fsdp2", editable = true }
+muon-fsdp2 = { path = "./src/muon", editable = true }
 
 
 [tool.hatch.metadata]

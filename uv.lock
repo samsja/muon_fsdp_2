@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.10"
 resolution-markers = [
     "python_full_version >= '3.12' and sys_platform == 'linux'",
@@ -670,7 +670,7 @@ wheels = [
 [[package]]
 name = "muon-fsdp2"
 version = "0.2.1"
-source = { editable = "src/muon_fsdp2" }
+source = { editable = "src/muon" }
 dependencies = [
     { name = "torch" },
 ]
@@ -1974,7 +1974,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "datasets", specifier = ">=3.0.0" },
-    { name = "muon-fsdp2", editable = "src/muon_fsdp2" },
+    { name = "muon-fsdp2", editable = "src/muon" },
     { name = "pydantic-config", git = "https://github.com/samsja/pydantic_config.git?rev=b7becc3" },
     { name = "torch" },
     { name = "torchdata" },
