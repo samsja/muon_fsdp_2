@@ -11,7 +11,7 @@ from torch.distributed.tensor import DTensor
 from torch.distributed import  gather, scatter
 from collections import deque
 
-__version__ = "0.2.1"
+__version__ = "0.3.0"
 
 __all__ = ["Muon"]
 

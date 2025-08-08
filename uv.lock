@@ -669,7 +669,7 @@ wheels = [
 
 [[package]]
 name = "muon-fsdp2"
-version = "0.2.1"
+version = "0.3.0"
 source = { editable = "src/muon" }
 dependencies = [
     { name = "torch" },
