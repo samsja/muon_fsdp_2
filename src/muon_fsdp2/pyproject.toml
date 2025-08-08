@@ -8,7 +8,7 @@ dependencies = ["torch"]
 authors = [
     {name = "Sami Jaghouar", email = "sami.jaghouar@gmail.com"},
 ]
-license = {file = "../../LICENSE"}
+license = {file = "LICENSE"}
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -27,11 +27,11 @@ Repository = "https://github.com/samsja/muon_fsdp_2"
 Documentation = "https://github.com/samsja/muon_fsdp_2#muon-fsdp2-package"
 Issues = "https://github.com/samsja/muon_fsdp_2/issues"
 
+
+
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.setuptools]
-packages = ["muon_fsdp2"]
-
-
+[tool.hatch.build]
+include = ["muon.py"]
