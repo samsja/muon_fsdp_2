@@ -161,7 +161,7 @@ class Fsdp1dWork:
         self.param.add_(update.reshape(self.param.shape), alpha=-self.group["lr"])
 
 
-class HsdpFsdp2dWork:
+class Hsdp2dWork:
     """
     Muon work for HSDP (Hybrid Sharded Data Parallel) with 2D mesh.
     Assumes mesh dimension 0 is for data parallelism (replicas across nodes)
@@ -414,7 +414,7 @@ class Muon(torch.optim.Optimizer):
     def _get_work_class(self, p: torch.Tensor) -> tuple[type[Work], int]:
         """
         dispatch the work class based on the mesh dimension.
-        For 2D mesh, uses HsdpFsdp2dWork which assumes:
+        For 2D mesh, uses Hsdp2dWork which assumes:
         - dim 0: replica/data parallel dimension (across nodes)
         - dim 1: FSDP dimension (sharding within nodes)
         """
@@ -422,7 +422,7 @@ class Muon(torch.optim.Optimizer):
             if p.device_mesh.ndim == 1:
                 return Fsdp1dWork, 8
             elif p.device_mesh.ndim == 2:
-                return HsdpFsdp2dWork, 8
+                return Hsdp2dWork, 8
             else:
                 raise ValueError(f"Unsupported mesh dimension: {p.device_mesh.ndim}")
         else:
