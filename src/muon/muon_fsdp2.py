@@ -161,13 +161,159 @@ class Fsdp1dWork:
         self.param.add_(update.reshape(self.param.shape), alpha=-self.group["lr"])
 
 
-class TpFsdp2dWork:
+class HsdpFsdp2dWork:
     """
-    Muon work for TP + FSDP mesh
+    Muon work for HSDP (Hybrid Sharded Data Parallel) with 2D mesh.
+    Assumes mesh dimension 0 is for data parallelism (replicas across nodes)
+    and mesh dimension 1 is for FSDP (sharding within nodes).
+    
+    For example, with 2 nodes of 8 GPUs each:
+    - mesh shape: (2, 8)
+    - dim 0: replica group (2 nodes)
+    - dim 1: FSDP group (8 GPUs per node)
     """
     
     def __init__(self, param, state, group, index: int):
-        raise NotImplementedError("not implemented")
+        self.param = param
+        self.state = state
+        self.group = group
+        self.index = index
+        self._intermediate_state = None
+    
+    def start(self):
+        self.param.grad = apply_momentum(
+            self.param.grad,
+            self.state["momentum_buffer"],
+            self.group["momentum"],
+            self.group["nesterov"]
+        )
+        
+        grad = self.param.grad
+        assert isinstance(grad, DTensor), "only supports DTensor parameters"
+        assert grad.device_mesh.ndim == 2, "only supports 2D mesh for HSDP"
+        
+        device_mesh = grad.device_mesh
+        
+        # Get the FSDP dimension (typically dim 1)
+        # Assuming the mesh is structured as (replicas, fsdp_shards)
+        fsdp_dim = 1
+        replica_dim = 0
+        
+        # Get mesh information
+        mesh_coords = device_mesh.get_coordinate()
+        if mesh_coords is None:
+            raise RuntimeError("Could not get mesh coordinates")
+        
+        replica_rank = mesh_coords[replica_dim]
+        fsdp_rank = mesh_coords[fsdp_dim]
+        
+        replica_size = device_mesh.size(replica_dim)
+        fsdp_size = device_mesh.size(fsdp_dim)
+        
+        # Get process groups for each dimension
+        fsdp_pg = device_mesh.get_group(fsdp_dim)
+        replica_pg = device_mesh.get_group(replica_dim)
+        
+        # Determine which rank in the FSDP group will handle this parameter
+        dest_fsdp_rank = self.index % fsdp_size
+        
+        # Step 1: Gather within FSDP group (along fsdp_dim)
+        if fsdp_rank == dest_fsdp_rank:
+            gather_lists = [torch.zeros_like(grad.to_local()) for _ in range(fsdp_size)]
+            gather_handle = gather(
+                grad.to_local(),
+                gather_lists,
+                group_dst=dest_fsdp_rank,
+                group=fsdp_pg,
+                async_op=True
+            )
+        else:
+            gather_lists = None
+            gather_handle = gather(
+                grad.to_local(),
+                None,
+                group_dst=dest_fsdp_rank,
+                group=fsdp_pg,
+                async_op=True
+            )
+        
+        self._intermediate_state = {
+            'dest_fsdp_rank': dest_fsdp_rank,
+            'fsdp_rank': fsdp_rank,
+            'replica_rank': replica_rank,
+            'fsdp_size': fsdp_size,
+            'replica_size': replica_size,
+            'fsdp_pg': fsdp_pg,
+            'replica_pg': replica_pg,
+            'gather_handle': gather_handle,
+            'gather_lists': gather_lists,
+            'fsdp_dim': fsdp_dim,
+            'replica_dim': replica_dim
+        }
+    
+    def finish(self):
+        assert self._intermediate_state is not None, "start() must be called first"
+        
+        grad = self.param.grad
+        state = self._intermediate_state
+        
+        # Wait for FSDP gather to complete
+        state['gather_handle'].wait()
+        
+        # Step 2: Process on the designated rank within each replica
+        if state['fsdp_rank'] == state['dest_fsdp_rank']:
+            # Concatenate gathered gradients
+            g_full_block = torch.cat(state['gather_lists'], dim=0)
+            
+            # Step 3: All-reduce across replicas (data parallel dimension)
+            # Average the gradients across replicas
+            if state['replica_size'] > 1:
+                torch.distributed.all_reduce(
+                    g_full_block,
+                    op=torch.distributed.ReduceOp.AVG,
+                    group=state['replica_pg']
+                )
+            
+            # Step 4: Apply Newton-Schulz orthogonalization
+            g_full_block.copy_(
+                zeropower_via_newtonschulz5(g_full_block, self.group["ns_steps"])
+            )
+            g_full_block = g_full_block.type_as(grad)
+            
+            # Step 5: Scatter back within FSDP group
+            chunks = list(g_full_block.chunk(chunks=state['fsdp_size'], dim=0))
+            scatter(
+                grad.to_local(),
+                scatter_list=chunks,
+                src=state['dest_fsdp_rank'],
+                group=state['fsdp_pg'],
+                async_op=False
+            )
+        else:
+            # Other ranks in FSDP group just receive their chunk
+            scatter(
+                grad.to_local(),
+                None,
+                src=state['dest_fsdp_rank'],
+                group=state['fsdp_pg'],
+                async_op=False
+            )
+        
+        # Step 6: Apply scaling and update parameters
+        update = apply_scaling(grad, self.group["rms_scale"])
+        self.param.mul_(1 - self.group["lr"] * self.group["weight_decay"])
+        self.param.add_(update.reshape(self.param.shape), alpha=-self.group["lr"])
+        
+        self._intermediate_state = None
+
+
+class TpFsdp2dWork:
+    """
+    Muon work for TP + FSDP mesh (not yet implemented)
+    """
+    
+    def __init__(self, param, state, group, index: int):
+        raise NotImplementedError("TP + FSDP not implemented, use HsdpFsdp2dWork for HSDP")
     
 class EpFsdp2dWork:
     """
@@ -268,12 +414,15 @@ class Muon(torch.optim.Optimizer):
     def _get_work_class(self, p: torch.Tensor) -> tuple[type[Work], int]:
         """
         dispatch the work class based on the mesh dimension.
+        For 2D mesh, uses HsdpFsdp2dWork which assumes:
+        - dim 0: replica/data parallel dimension (across nodes)
+        - dim 1: FSDP dimension (sharding within nodes)
         """
         if isinstance(p, DTensor):
             if p.device_mesh.ndim == 1:
                 return Fsdp1dWork, 8
             elif p.device_mesh.ndim == 2:
-                return TpFsdp2dWork, 8
+                return HsdpFsdp2dWork, 8
             else:
                 raise ValueError(f"Unsupported mesh dimension: {p.device_mesh.ndim}")
         else:
