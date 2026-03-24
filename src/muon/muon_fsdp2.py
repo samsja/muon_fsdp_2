@@ -285,7 +285,7 @@ class Hsdp2dWork:
             scatter(
                 grad.to_local(),
                 scatter_list=chunks,
-                src=state['dest_fsdp_rank'],
+                group_src=state['dest_fsdp_rank'],
                 group=state['fsdp_pg'],
                 async_op=False
             )
@@ -294,7 +294,7 @@ class Hsdp2dWork:
             scatter(
                 grad.to_local(),
                 None,
-                src=state['dest_fsdp_rank'],
+                group_src=state['dest_fsdp_rank'],
                 group=state['fsdp_pg'],
                 async_op=False
             )
