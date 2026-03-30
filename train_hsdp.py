@@ -1,3 +1,6 @@
+# Multi-node training script with HSDP (Hybrid Sharded Data Parallel) support
+# Based on train_fsdp.py with 2D mesh initialization for multi-node setups
+
 from dataclasses import dataclass
 import os
 import time
