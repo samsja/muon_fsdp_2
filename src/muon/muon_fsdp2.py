@@ -313,7 +313,7 @@ class TpFsdp2dWork:
     """
     
     def __init__(self, param, state, group, index: int):
-        raise NotImplementedError("TP + FSDP not implemented, use HsdpFsdp2dWork for HSDP")
+        raise NotImplementedError("TP + FSDP not implemented, use Hsdp2dWork for HSDP")
     
 class EpFsdp2dWork:
     """
