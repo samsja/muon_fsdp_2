@@ -76,6 +76,7 @@ cd muon_fsdp_2
 uv sync
 ```
 
+## Run FSDP (single node / multi GPU)
 run debug
 
 ```bash
@@ -108,6 +109,37 @@ old code not updated yet
 | 1B         | 8    | H100 sxm | 45% |
 | 7B         | 8    | H100 sxm | 49% |
 
+## Run HSDP (multi node / multi GPU)
+
+HSDP (Hybrid Sharded Data Parallel) combines data parallelism across nodes with FSDP within each node, providing better scaling for multi-node training.
+
+run debug (simulating 2 nodes with 1 GPU each on a single machine)
+
+```bash
+# Terminal 1 (node 0)
+CUDA_VISIBLE_DEVICES=0 uv run torchrun --nproc_per_node=1 --nnodes=2 --node_rank=0 \
+  --master_addr=<node0_ip> --master_port=<port> \
+  train_hsdp.py @ configs/debug/normal.toml
+
+# Terminal 2 (mimics a pseudo node 1, physically still node 0)
+CUDA_VISIBLE_DEVICES=1 uv run torchrun --nproc_per_node=1 --nnodes=2 --node_rank=1 \
+  --master_addr=<node0_ip> --master_port=<port> \
+  train_hsdp.py @ configs/debug/normal.toml
+```
+
+run 150M (2 nodes with 8 GPUs each)
+
+```bash
+# Node 0
+uv run torchrun --nproc_per_node=8 --nnodes=2 --node_rank=0 \
+  --master_addr=<node0_ip> --master_port=<port> \
+  train_hsdp.py @ configs/150M/H100.toml
+
+# Node 1
+uv run torchrun --nproc_per_node=8 --nnodes=2 --node_rank=1 \
+  --master_addr=<node0_ip> --master_port=<port> \
+  train_hsdp.py @ configs/150M/H100.toml
+```
 
 ## convergence 150M
 
