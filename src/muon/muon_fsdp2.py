@@ -33,7 +33,7 @@ def nsloop_torch(X: torch.Tensor, steps: int, *, a=3.4445, b=-4.7750, c=2.0315):
         X = a * X + B @ X
     return X
 
-def zeropower_via_newtonschulz5(G, steps: int):
+def zeropower_via_newtonschulz5(G, steps: int, coeffs=(3.4445, -4.7750, 2.0315)):
     """
     Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
     quintic iteration whose coefficients are selected to maximize the slope at zero. For the purpose
@@ -42,9 +42,14 @@ def zeropower_via_newtonschulz5(G, steps: int):
     on the interval. This iteration therefore does not produce UV^T but rather something like US'V^T
     where S' is diagonal with S_{ii}' ~ Uniform(0.5, 1.5), which turns out not to hurt model
     performance at all relative to UV^T, where USV^T = G is the SVD.
+
+    coeffs: (a, b, c) for the quintic p(σ) = aσ + bσ³ + cσ⁵. Default is the
+        Jordan/YouJiacheng "max slope at zero" choice. Non-default values let
+        callers experiment with non-oscillatory polynomials (e.g. (1.875,
+        -1.25, 0.375), the super-convergent monotone quintic).
     """
     assert G.ndim >= 2 # batched Muon implementation by @scottjmaddox, and put into practice in the record by @YouJiacheng
-    a, b, c = (3.4445, -4.7750,  2.0315)
+    a, b, c = coeffs
     X = G.bfloat16()
     if G.size(-2) > G.size(-1):
         X = X.mT
